@@ -58,9 +58,15 @@ AEGIS transforms an Android smartphone into an autonomous, voice-driven personal
 
 * **100% On-Device Local Brain**: Powered by Google AI Edge LiteRT-LM (`gemma-4-E2B-it.litertlm` on GPU).
 * **Dual-Engine Voice Pipeline**: Continuous offline 16kHz Vosk listener for *"Gemma"* wake-word with atomic hardware-level microphone handoff to Android native speech recognition.
+* **Persistent Stark Floating HUD**: Draggable cyan Arc-Reactor HUD (`WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY`) supported by a persistent foreground sentinel service.
 * **Autonomous OS Navigation**: Direct view hierarchy parsing (`AccessibilityNodeInfo`) and programmatic touch gesture dispatch (`GestureDescription`).
 * **Episodic Skill Memory**: Self-improving episodic memory layer powered by Room SQLite (`SkillDao`) that caches successful ReAct tool sequences for sub-second cached execution.
 * **Biometric Human-In-The-Loop (HITL) Gate**: Zero-trust risk classification (`RiskAssessor`) that transparently halts critical actions (deletions, payments, credential inputs) behind Android Biometric Prompt verification.
+* **Active Communication & Call Engine**: Native tools to send messages via WhatsApp or SMS (`send_message`), place direct calls or launch the dialer (`call_handling`), and inspect recent call logs.
+* **Local Media & File Discovery**: Local audio memo & call recording scanner (`read_recordings`) and fast filesystem indexer (`search_local_files`).
+* **Hardware & Process Telemetry**: Real-time memory, storage, and battery metrics (`device_diagnostics`).
+* **Project S.T.A.R.K. / Obsidian Second Brain Synchronization**: Exports all episodic facts, captured notifications, and learned ReAct skills into Obsidian-compliant Markdown with frontmatter and `[[backlinks]]` (`stark_context_sync`).
+* **Passive Notification Context Capture**: Background listener service buffering WhatsApp and Gmail notifications into local Room SQLite.
 
 ---
 

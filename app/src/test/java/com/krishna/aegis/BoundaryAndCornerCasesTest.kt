@@ -24,7 +24,10 @@ class BoundaryAndCornerCasesTest {
         override suspend fun dispatchGlobalBack(): Boolean = true
         override suspend fun dispatchGlobalHome(): Boolean = true
         override suspend fun launchApp(packageName: String): Boolean = true
-        override fun resolvePackageForApp(appName: String): String? = "com.example.${appName.lowercase()}"
+        override fun resolvePackageForApp(appName: String): String? {
+            if (appName.isBlank()) return null
+            return "com.example.${appName.lowercase()}"
+        }
         override suspend fun takeScreenCapture(): Bitmap? = null
     }
 

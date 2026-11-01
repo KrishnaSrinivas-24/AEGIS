@@ -17,6 +17,12 @@ object ToolRegistry {
         register(ReadCalendarTool())
         register(CreateNoteTool())
         register(ReadRecentMessagesTool())
+        register(SearchLocalFilesTool())
+        register(DeviceDiagnosticsTool())
+        register(StarkContextSyncTool())
+        register(SendMessageTool())
+        register(CallHandlingTool())
+        register(ReadRecordingsTool())
     }
 
     fun register(tool: AegisTool) {
