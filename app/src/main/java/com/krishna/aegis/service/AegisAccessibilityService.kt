@@ -275,8 +275,9 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
     }
 
     // --- ToolServiceContext Implementation ---
+    @Suppress("DEPRECATION")
     override fun getRootInActiveWindow(): AccessibilityNodeInfo? {
-        return rootInActiveWindow
+        return super.getRootInActiveWindow()
     }
 
     override fun getActivePackageName(): String {
