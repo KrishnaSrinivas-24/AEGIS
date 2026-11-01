@@ -18,8 +18,7 @@ sealed class RiskVerdict {
 object RiskAssessor {
 
     private val PAYMENT_KEYWORDS = setOf(
-        "pay", "payment", "send", "transfer", "upi", "checkout", "buy", "purchase",
-        "confirm order", "place order", "send money"
+        "payment", "transfer money", "upi", "checkout", "confirm order", "place order", "send money"
     )
 
     private val AUTH_KEYWORDS = setOf(
@@ -72,7 +71,7 @@ object RiskAssessor {
 
         val paymentHit = PAYMENT_KEYWORDS.filter { textToInspect.contains(it) }
         if (paymentHit.isNotEmpty()) {
-            riskScore += paymentHit.size.coerceAtMost(2)
+            riskScore += 2
             detectedReasons.add("Payment keywords detected: ${paymentHit.joinToString()}")
         }
 
