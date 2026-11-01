@@ -1,15 +1,45 @@
-*.iml
-.gradle
+# Built-in Gradle & Build caches
+.gradle/
+build/
+app/build/
+**/build/
+.kotlin/
+
+# Local & SDK configuration
+local.properties
 /local.properties
+
+# Model binaries & Large weights
+*.litertlm
+*.bin
+*.tflite
+*.onnx
+*.task
+*.download
+
+# Android build artifacts & Packages
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Keystores & Signing credentials
+*.jks
+*.keystore
+
+# IDE & Editor files
+*.iml
+.idea/
 /.idea/
-.DS_Store
-/build
 /captures
 .externalNativeBuild
 .cxx
-local.properties
-app/build/
 *.hprof
-*.litertlm
-*.bin
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Agent metadata
 .agents/
+
