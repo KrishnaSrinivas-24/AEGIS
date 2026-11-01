@@ -36,6 +36,12 @@ import java.util.Locale
 
 class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, VoskRecognitionListener, RecognitionListener, TextToSpeech.OnInitListener {
 
+    companion object {
+        var instance: AegisAccessibilityService? = null
+            private set
+        val isRunning: Boolean get() = instance != null
+    }
+
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val awarenessTracker = AccessibilityAwarenessTracker()
 
@@ -55,6 +61,7 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
         EventLogger.log(AegisEvent.VoiceState("AEGIS Accessibility Service Connected"))
 
         // Initialize Engine & Orchestrator
@@ -209,12 +216,13 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
     }
 
     override fun onDestroy() {
-        super.onDestroy()
+        instance = null
         stopVoskListening()
         androidSpeechRecognizer?.destroy()
         textToSpeech?.stop()
         textToSpeech?.shutdown()
         serviceScope.cancel()
+        super.onDestroy()
     }
 
     // --- ToolServiceContext Implementation ---
@@ -328,5 +336,10 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
 
     override suspend fun takeScreenCapture(): Bitmap? {
         return ScreenCapture.capture(this)
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        instance = null
+        return super.onUnbind(intent)
     }
 }

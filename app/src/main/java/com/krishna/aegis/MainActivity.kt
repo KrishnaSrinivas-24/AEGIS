@@ -27,6 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.krishna.aegis.engine.AegisModelConfig
 import com.krishna.aegis.service.AegisAccessibilityService
 
@@ -64,6 +67,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -82,20 +86,45 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
         mutableStateOf(AegisModelConfig.isModelPresent(context))
     }
 
+    var detectedModelName by remember {
+        val f = AegisModelConfig.getModelFile(context)
+        mutableStateOf(if (f.exists()) f.name else AegisModelConfig.DEFAULT_MODEL_NAME)
+    }
+
+    var modelSizeMb by remember {
+        val f = AegisModelConfig.getModelFile(context)
+        mutableStateOf(if (f.exists()) "${f.length() / (1024 * 1024)} MB" else "Not Found")
+    }
+
+    fun refreshAllStatus() {
+        hasMicPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
+        isModelInstalled = AegisModelConfig.isModelPresent(context)
+        val f = AegisModelConfig.getModelFile(context)
+        detectedModelName = if (f.exists()) f.name else AegisModelConfig.DEFAULT_MODEL_NAME
+        modelSizeMb = if (f.exists()) "${f.length() / (1024 * 1024)} MB" else "Not Found"
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasMicPermission = isGranted
     }
 
-    // Refresh status when returning to foreground
-    DisposableEffect(Unit) {
-        val listener = {
-            isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
-            isModelInstalled = AegisModelConfig.isModelPresent(context)
+    // Refresh status automatically whenever user returns to foreground
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshAllStatus()
+            }
         }
-        listener()
-        onDispose { }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     Column(
@@ -128,8 +157,14 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             title = "OS Accessibility Core",
             subtitle = if (isAccessibilityEnabled) "Active & Inspecting UI Tree" else "Disabled — Required for autonomous actions",
             isReady = isAccessibilityEnabled,
-            actionLabel = if (isAccessibilityEnabled) "Configured" else "Enable Service",
-            onAction = onOpenAccessibilitySettings
+            actionLabel = if (isAccessibilityEnabled) "Active" else "Enable Service",
+            onAction = {
+                if (!isAccessibilityEnabled) {
+                    onOpenAccessibilitySettings()
+                } else {
+                    refreshAllStatus()
+                }
+            }
         )
 
         // Status Card 2: Audio & Wake-Word
@@ -137,19 +172,17 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             title = "Offline Wake-Word (Vosk 16kHz)",
             subtitle = if (hasMicPermission) "Continuous listener armed for 'Gemma'" else "Microphone permission required",
             isReady = hasMicPermission,
-            actionLabel = if (hasMicPermission) "Granted" else "Grant Mic",
+            actionLabel = if (hasMicPermission) "Armed" else "Grant Mic",
             onAction = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
         )
 
         // Status Card 3: Gemma 4 Brain (LiteRT-LM)
-        val modelFile = AegisModelConfig.getModelFile(context)
-        val modelSizeMb = if (modelFile.exists()) (modelFile.length() / (1024 * 1024)).toString() + " MB" else "Not Found"
         StatusPanel(
-            title = "Gemma 4 LiteRT-LM (${AegisModelConfig.DEFAULT_MODEL_NAME})",
+            title = "Gemma 4 LiteRT-LM ($detectedModelName)",
             subtitle = if (isModelInstalled) "Ready on GPU ($modelSizeMb)" else "Push model via ADB: /sdcard/Android/data/.../files/models/",
             isReady = isModelInstalled,
-            actionLabel = if (isModelInstalled) "Installed" else "Check Path",
-            onAction = { isModelInstalled = AegisModelConfig.isModelPresent(context) }
+            actionLabel = if (isModelInstalled) "Ready ($modelSizeMb)" else "Rescan",
+            onAction = { refreshAllStatus() }
         )
 
         Spacer(modifier = Modifier.weight(1f))
@@ -232,9 +265,9 @@ fun StatusPanel(
 
             Button(
                 onClick = onAction,
-                enabled = !isReady,
+                enabled = true,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF00E5FF),
+                    containerColor = if (isReady) Color(0xFF10B981) else Color(0xFF00E5FF),
                     disabledContainerColor = Color(0xFF1E293B)
                 ),
                 shape = RoundedCornerShape(6.dp),
@@ -244,7 +277,7 @@ fun StatusPanel(
                     text = actionLabel,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (isReady) Color(0xFF94A3B8) else Color.Black
+                    color = Color.Black
                 )
             }
         }
@@ -252,8 +285,29 @@ fun StatusPanel(
 }
 
 private fun checkAccessibilityServiceEnabled(context: Context): Boolean {
-    val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
-    val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-    val expectedId = "${context.packageName}/${AegisAccessibilityService::class.java.canonicalName}"
-    return enabledServices.any { it.id.equals(expectedId, ignoreCase = true) }
+    // 1. Direct runtime instance check
+    if (AegisAccessibilityService.isRunning) return true
+
+    // 2. Settings.Secure check
+    try {
+        val enabledServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: ""
+        if (enabledServices.contains(context.packageName, ignoreCase = true)) {
+            return true
+        }
+    } catch (_: Exception) {}
+
+    // 3. Fallback: AccessibilityManager query
+    return try {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
+        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        enabledServices.any {
+            it.id.contains(context.packageName, ignoreCase = true) ||
+            it.resolveInfo?.serviceInfo?.packageName.equals(context.packageName, ignoreCase = true)
+        }
+    } catch (_: Exception) {
+        false
+    }
 }
