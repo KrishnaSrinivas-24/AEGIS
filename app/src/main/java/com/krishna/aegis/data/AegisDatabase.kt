@@ -6,13 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [Skill::class, UserFact::class],
-    version = 1,
+    entities = [Skill::class, UserFact::class, BufferedNotification::class],
+    version = 2,
     exportSchema = false
 )
 abstract class AegisDatabase : RoomDatabase() {
     abstract fun skillDao(): SkillDao
     abstract fun factDao(): FactDao
+    abstract fun notificationDao(): NotificationDao
 
     companion object {
         @Volatile

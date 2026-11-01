@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
@@ -16,7 +17,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,11 +37,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.krishna.aegis.engine.AegisModelConfig
 import com.krishna.aegis.service.AegisAccessibilityService
+import com.krishna.aegis.service.AegisSentinelService
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Start background keep-alive sentinel service
+        try {
+            AegisSentinelService.start(this)
+        } catch (_: Exception) {}
 
         setContent {
             MaterialTheme(
@@ -58,6 +67,19 @@ class MainActivity : ComponentActivity() {
                         onOpenAccessibilitySettings = {
                             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                             startActivity(intent)
+                        },
+                        onOpenOverlaySettings = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                val intent = Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:$packageName")
+                                )
+                                startActivity(intent)
+                            }
+                        },
+                        onOpenNotificationListenerSettings = {
+                            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                            startActivity(intent)
                         }
                     )
                 }
@@ -67,7 +89,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
+fun AegisDashboardScreen(
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
+    onOpenNotificationListenerSettings: () -> Unit
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -77,6 +103,21 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
                 context,
                 Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    var hasCalendarPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_CALENDAR
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    var hasOverlayPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(context) else true
         )
     }
 
@@ -103,6 +144,11 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             context,
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
+        hasCalendarPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_CALENDAR
+        ) == PackageManager.PERMISSION_GRANTED
+        hasOverlayPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(context) else true
         isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
         isModelInstalled = AegisModelConfig.isModelPresent(context)
         val f = AegisModelConfig.getModelFile(context)
@@ -110,10 +156,12 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
         modelSizeMb = if (f.exists()) "${f.length() / (1024 * 1024)} MB" else "Not Found"
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasMicPermission = isGranted
+    val permissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        hasMicPermission = result[Manifest.permission.RECORD_AUDIO] ?: hasMicPermission
+        hasCalendarPermission = result[Manifest.permission.READ_CALENDAR] ?: hasCalendarPermission
+        refreshAllStatus()
     }
 
     // Refresh status automatically whenever user returns to foreground
@@ -132,11 +180,12 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // Header
-        Column(modifier = Modifier.padding(top = 16.dp)) {
+        Column(modifier = Modifier.padding(top = 8.dp)) {
             Text(
                 text = "A.E.G.I.S.",
                 fontSize = 28.sp,
@@ -159,13 +208,9 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             title = "OS Accessibility Core",
             subtitle = if (isAccessibilityEnabled) "Active & Inspecting UI Tree" else "Disabled — Required for autonomous actions",
             isReady = isAccessibilityEnabled,
-            actionLabel = if (isAccessibilityEnabled) "Active" else "Enable Service",
+            actionLabel = if (isAccessibilityEnabled) "Active" else "Enable",
             onAction = {
-                if (!isAccessibilityEnabled) {
-                    onOpenAccessibilitySettings()
-                } else {
-                    refreshAllStatus()
-                }
+                if (!isAccessibilityEnabled) onOpenAccessibilitySettings() else refreshAllStatus()
             }
         )
 
@@ -175,7 +220,13 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             subtitle = if (hasMicPermission) "Continuous listener armed for 'Gemma'" else "Microphone permission required",
             isReady = hasMicPermission,
             actionLabel = if (hasMicPermission) "Armed" else "Grant Mic",
-            onAction = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+            onAction = {
+                val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    perms.add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                permissionsLauncher.launch(perms.toTypedArray())
+            }
         )
 
         // Status Card 3: Gemma 4 Brain (LiteRT-LM)
@@ -187,6 +238,28 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             onAction = { refreshAllStatus() }
         )
 
+        // Status Card 4: Floating Sentinel HUD (Over Other Apps)
+        StatusPanel(
+            title = "Floating Sentinel HUD",
+            subtitle = if (hasOverlayPermission) "Active over other apps (Stark HUD Overlay)" else "Permission required to draw over apps",
+            isReady = hasOverlayPermission,
+            actionLabel = if (hasOverlayPermission) "Active" else "Enable HUD",
+            onAction = {
+                if (!hasOverlayPermission) onOpenOverlaySettings() else AegisSentinelService.start(context)
+            }
+        )
+
+        // Status Card 5: Google Calendar & Context
+        StatusPanel(
+            title = "Calendar & Messages Context",
+            subtitle = if (hasCalendarPermission) "Connected: CalendarContract & Message Buffers" else "Grant Calendar permission for agenda context",
+            isReady = hasCalendarPermission,
+            actionLabel = if (hasCalendarPermission) "Connected" else "Grant Perm",
+            onAction = {
+                permissionsLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR))
+            }
+        )
+
         // System Maintenance / Cache Controls
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -195,7 +268,7 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             val coroutineScope = rememberCoroutineScope()
             OutlinedButton(
                 onClick = {
-                    coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    coroutineScope.launch(Dispatchers.IO) {
                         try {
                             com.krishna.aegis.data.AegisDatabase.getInstance(context).skillDao().clearAllSkills()
                         } catch (_: Exception) {}
@@ -210,16 +283,16 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             }
 
             OutlinedButton(
-                onClick = { refreshAllStatus() },
+                onClick = { onOpenNotificationListenerSettings() },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(8.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f))
             ) {
-                Text("Refresh", color = Color(0xFF00E5FF), fontSize = 12.sp)
+                Text("Notification Access", color = Color(0xFF00E5FF), fontSize = 12.sp)
             }
         }
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Telemetry info panel
         Box(
@@ -238,7 +311,7 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
                     fontFamily = FontFamily.Monospace
                 )
                 Text(
-                    text = "• Say \"Gemma\" to wake the sentinel.\n• State your task (e.g. \"Open Settings and turn on Wi-Fi\").\n• Sensitive operations trigger biometric fingerprint verification.\n• Successful workflows are cached in Room DB for sub-second replay.",
+                    text = "• Say \"Gemma\" or tap the floating Stark HUD to activate.\n• Context tools: \"What's on my calendar today?\", \"Read recent WhatsApp messages\", \"Save to Notes\".\n• Background keep-alive service maintains continuous OS sentinel status.",
                     fontSize = 12.sp,
                     color = Color(0xFFCBD5E1),
                     lineHeight = 18.sp
@@ -268,7 +341,7 @@ fun StatusPanel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -319,10 +392,8 @@ fun StatusPanel(
 }
 
 private fun checkAccessibilityServiceEnabled(context: Context): Boolean {
-    // 1. Direct runtime instance check
     if (AegisAccessibilityService.isRunning) return true
 
-    // 2. Settings.Secure check
     try {
         val enabledServices = Settings.Secure.getString(
             context.contentResolver,
@@ -333,7 +404,6 @@ private fun checkAccessibilityServiceEnabled(context: Context): Boolean {
         }
     } catch (_: Exception) {}
 
-    // 3. Fallback: AccessibilityManager query
     return try {
         val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
         val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)

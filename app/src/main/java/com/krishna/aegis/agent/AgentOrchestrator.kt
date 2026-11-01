@@ -4,6 +4,10 @@ import com.krishna.aegis.service.UINodeParser
 import com.krishna.aegis.telemetry.AegisError
 import com.krishna.aegis.telemetry.AegisEvent
 import com.krishna.aegis.telemetry.EventLogger
+import com.krishna.aegis.tools.HITLInterceptionWrapper
+import com.krishna.aegis.tools.RiskAssessor
+import com.krishna.aegis.tools.RiskVerdict
+import com.krishna.aegis.tools.ScreenContextSnapshot
 import com.krishna.aegis.tools.ToolOutcome
 import com.krishna.aegis.tools.ToolRegistry
 import com.krishna.aegis.tools.ToolServiceContext
@@ -72,10 +76,39 @@ class AgentOrchestrator(
                         windowManager.addEntry(HistoryEntry(currentStep, decision, outcome))
                         EventLogger.log(AegisEvent.ToolResult(decision.toolName, "UNKNOWN_TOOL"))
                     } else {
-                        val outcome = try {
-                            tool.execute(decision.args, toolContext)
-                        } catch (e: Exception) {
-                            ToolOutcome.FatalErr("Unhandled tool crash: ${e.message}")
+                        // Gate tool execution through RiskAssessor before execution
+                        val snapshot = ScreenContextSnapshot(
+                            activePackageName = toolContext.getActivePackageName(),
+                            visibleScreenSummary = screenSummary,
+                            targetNode = null,
+                            toolName = decision.toolName,
+                            toolArgs = decision.args
+                        )
+                        val riskVerdict = RiskAssessor.evaluateRisk(snapshot)
+
+                        val outcome = if (riskVerdict is RiskVerdict.RequireBiometric) {
+                            EventLogger.log(AegisEvent.BiometricIntercept(riskVerdict.reason, approved = false))
+                            val approved = HITLInterceptionWrapper.requestBiometricConfirmation(
+                                toolContext.androidContext,
+                                "AEGIS Security Gate: ${riskVerdict.reason}"
+                            )
+                            EventLogger.log(AegisEvent.BiometricIntercept(riskVerdict.reason, approved = approved))
+
+                            if (!approved) {
+                                ToolOutcome.AuthErr("Action aborted: Biometric authentication failed or was cancelled (${riskVerdict.reason})")
+                            } else {
+                                try {
+                                    tool.execute(decision.args, toolContext)
+                                } catch (e: Exception) {
+                                    ToolOutcome.FatalErr("Unhandled tool crash: ${e.message}")
+                                }
+                            }
+                        } else {
+                            try {
+                                tool.execute(decision.args, toolContext)
+                            } catch (e: Exception) {
+                                ToolOutcome.FatalErr("Unhandled tool crash: ${e.message}")
+                            }
                         }
 
                         windowManager.addEntry(HistoryEntry(currentStep, decision, outcome))
@@ -112,6 +145,25 @@ class AgentOrchestrator(
         for ((idx, action) in plan.withIndex()) {
             val tool = ToolRegistry.getTool(action.toolName) ?: return false
             EventLogger.log(AegisEvent.PlanStep(idx + 1, action.toolName, action.args))
+
+            val snapshot = ScreenContextSnapshot(
+                activePackageName = toolContext.getActivePackageName(),
+                visibleScreenSummary = UINodeParser.summarizeScreen(toolContext.getRootInActiveWindow(), toolContext.getActivePackageName()),
+                targetNode = null,
+                toolName = action.toolName,
+                toolArgs = action.args
+            )
+            val riskVerdict = RiskAssessor.evaluateRisk(snapshot)
+            if (riskVerdict is RiskVerdict.RequireBiometric) {
+                EventLogger.log(AegisEvent.BiometricIntercept(riskVerdict.reason, approved = false))
+                val approved = HITLInterceptionWrapper.requestBiometricConfirmation(
+                    toolContext.androidContext,
+                    "AEGIS Security Gate: ${riskVerdict.reason}"
+                )
+                EventLogger.log(AegisEvent.BiometricIntercept(riskVerdict.reason, approved = approved))
+                if (!approved) return false
+            }
+
             val outcome = try {
                 tool.execute(action.args, toolContext)
             } catch (e: Exception) {

@@ -1,10 +1,12 @@
 package com.krishna.aegis.agent
 
 import android.content.Context
+import android.util.Log
 import com.krishna.aegis.data.AegisDatabase
 import com.krishna.aegis.data.Skill
 import com.krishna.aegis.engine.AegisEngine
-import com.krishna.aegis.engine.AgentResponse
+import com.krishna.aegis.engine.EngineTurnResult
+import com.krishna.aegis.tools.ToolOutcome
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -12,6 +14,7 @@ class Planner(
     private val context: Context,
     private val engine: AegisEngine
 ) {
+    private val TAG = "Planner"
     private val db = AegisDatabase.getInstance(context)
 
     suspend fun checkCachedSkill(goal: String): List<Decision.Act>? {
@@ -38,37 +41,62 @@ class Planner(
         screenSummary: String,
         history: List<HistoryEntry>
     ): Decision {
-        // Collect saved facts from database
-        val facts = db.factDao().getAllFacts().joinToString("\n") { "${it.factKey}: ${it.factValue}" }
+        val turnResult = if (history.isEmpty()) {
+            // First turn of the goal: reset conversation & send user turn prompt
+            engine.resetConversation()
 
-        val userPrompt = PromptBuilder.buildUserTurnPrompt(
-            goal = goal,
-            screenSummary = screenSummary,
-            history = history,
-            relevantFacts = facts.ifBlank { null }
-        )
+            val facts = db.factDao().getAllFacts().joinToString("\n") { "${it.factKey}: ${it.factValue}" }
+            val userPrompt = PromptBuilder.buildUserTurnPrompt(
+                goal = goal,
+                screenSummary = screenSummary,
+                history = history,
+                relevantFacts = facts.ifBlank { null }
+            )
+            engine.sendUserPrompt(userPrompt)
+        } else {
+            // Subsequent turns: feed previous tool execution result into LiteRT-LM conversation
+            val lastEntry = history.last()
+            val outcomeDesc = formatOutcome(lastEntry.outcome)
+            val resultPayload = buildString {
+                append(outcomeDesc)
+                append("\n[Screen Update]: ")
+                append(screenSummary)
+            }
+            engine.sendToolResult(lastEntry.decision.toolName, resultPayload)
+        }
 
-        val responseText = engine.generateResponse(userPrompt)
-        val agentResponse = engine.parseToolCall(responseText)
-
-        return when (agentResponse) {
-            is AgentResponse.ToolCallRequest -> {
-                if (agentResponse.toolName == "tasks") {
-                    val summary = agentResponse.args["summary"]?.toString() ?: "Goal completed."
+        return when (turnResult) {
+            is EngineTurnResult.ToolCall -> {
+                Log.i(TAG, "LiteRT-LM ToolCall turn: ${turnResult.name}(${turnResult.arguments})")
+                if (turnResult.name == "tasks") {
+                    val summary = turnResult.arguments["summary"]?.toString() ?: "Goal completed."
                     Decision.Finish(summary)
                 } else {
-                    Decision.Act(agentResponse.toolName, agentResponse.args)
+                    Decision.Act(turnResult.name, turnResult.arguments)
                 }
             }
-            is AgentResponse.Error -> {
-                // If model failed to generate valid JSON, fall back to read_screen_summary or finishing if stuck
+            is EngineTurnResult.Text -> {
+                Log.i(TAG, "LiteRT-LM Text turn: ${turnResult.content}")
+                Decision.Finish(turnResult.content.ifBlank { "Completed." })
+            }
+            is EngineTurnResult.Error -> {
+                Log.w(TAG, "LiteRT-LM Error turn: ${turnResult.message}")
                 if (history.size > 15) {
-                    Decision.Finish("Maximum turns reached without explicit completion.")
+                    Decision.Finish("Maximum turns reached without explicit completion: ${turnResult.message}")
                 } else {
                     Decision.Act("read_screen_summary", emptyMap())
                 }
             }
-            else -> Decision.Finish("Completed.")
+        }
+    }
+
+    private fun formatOutcome(outcome: ToolOutcome): String {
+        return when (outcome) {
+            is ToolOutcome.Ok -> "SUCCESS: ${outcome.result}"
+            is ToolOutcome.TransientErr -> "RETRYABLE ERROR: ${outcome.message}"
+            is ToolOutcome.LogicErr -> "LOGIC ERROR: ${outcome.message}"
+            is ToolOutcome.AuthErr -> "AUTH REJECTED: ${outcome.message}"
+            is ToolOutcome.FatalErr -> "FATAL ERROR: ${outcome.message}"
         }
     }
 

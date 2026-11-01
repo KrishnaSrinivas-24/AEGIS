@@ -14,6 +14,9 @@ object ToolRegistry {
         register(SaveFactTool())
         register(RetrieveFactTool())
         register(TasksTool())
+        register(ReadCalendarTool())
+        register(CreateNoteTool())
+        register(ReadRecentMessagesTool())
     }
 
     fun register(tool: AegisTool) {
@@ -23,6 +26,10 @@ object ToolRegistry {
     fun getTool(name: String): AegisTool? = tools[name]
 
     fun getAllTools(): List<AegisTool> = tools.values.toList()
+
+    fun getLiteRtToolProviders(): List<com.google.ai.edge.litertlm.ToolProvider> {
+        return getAllTools().map { com.google.ai.edge.litertlm.tool(AegisOpenApiTool(it)) }
+    }
 
     fun getToolDeclarationsPrompt(): String {
         return buildString {

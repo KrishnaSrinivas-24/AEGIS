@@ -158,7 +158,7 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
     override fun onTimeout() {}
 
     // --- Android SpeechRecognizer Command Capture ---
-    private fun startAndroidCommandCapture() {
+    fun startAndroidCommandCapture() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toLanguageTag())

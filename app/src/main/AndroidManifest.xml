@@ -4,8 +4,12 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -45,5 +49,27 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/aegis_a11y_config" />
         </service>
+
+        <!-- 4. Persistent Foreground Sentinel Service -->
+        <service
+            android:name=".service.AegisSentinelService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Autonomous on-device interface agent keep-alive and floating overlay" />
+        </service>
+
+        <!-- 5. Passive Notification Listener for Context Capture -->
+        <service
+            android:name=".service.AegisNotificationListenerService"
+            android:exported="true"
+            android:label="AEGIS Notification Context Sentinel"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
     </application>
 </manifest>
