@@ -30,6 +30,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.krishna.aegis.engine.AegisModelConfig
 import com.krishna.aegis.service.AegisAccessibilityService
 
@@ -184,6 +186,38 @@ fun AegisDashboardScreen(onOpenAccessibilitySettings: () -> Unit) {
             actionLabel = if (isModelInstalled) "Ready ($modelSizeMb)" else "Rescan",
             onAction = { refreshAllStatus() }
         )
+
+        // System Maintenance / Cache Controls
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            val coroutineScope = rememberCoroutineScope()
+            OutlinedButton(
+                onClick = {
+                    coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            com.krishna.aegis.data.AegisDatabase.getInstance(context).skillDao().clearAllSkills()
+                        } catch (_: Exception) {}
+                    }
+                    android.widget.Toast.makeText(context, "Skill Cache Cleared", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f))
+            ) {
+                Text("Clear Cache", color = Color(0xFFEF4444), fontSize = 12.sp)
+            }
+
+            OutlinedButton(
+                onClick = { refreshAllStatus() },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f))
+            ) {
+                Text("Refresh", color = Color(0xFF00E5FF), fontSize = 12.sp)
+            }
+        }
 
         Spacer(modifier = Modifier.weight(1f))
 

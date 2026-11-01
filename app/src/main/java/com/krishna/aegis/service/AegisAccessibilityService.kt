@@ -49,12 +49,18 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
     private lateinit var planner: Planner
     private lateinit var agentOrchestrator: AgentOrchestrator
 
-    // Voice Stack
+    // Voice Stack State Guard
     private var voskModel: Model? = null
     private var voskSpeechService: SpeechService? = null
     private var androidSpeechRecognizer: SpeechRecognizer? = null
     private var textToSpeech: TextToSpeech? = null
     private var isTtsReady = false
+
+    @Volatile
+    private var isCapturingCommand = false
+    @Volatile
+    private var isProcessingGoal = false
+    private var lastWakeTimestamp = 0L
 
     override val androidContext: Context
         get() = this
@@ -99,31 +105,48 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
     }
 
     private fun startVoskListening() {
+        if (isCapturingCommand || isProcessingGoal || voskSpeechService != null) {
+            return
+        }
         val model = voskModel ?: return
         try {
             val rec = Recognizer(model, 16000.0f)
             voskSpeechService = SpeechService(rec, 16000.0f)
             voskSpeechService?.startListening(this)
             EventLogger.log(AegisEvent.VoiceState("Vosk listening for wake-word 'Gemma' (16kHz)"))
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             EventLogger.log(AegisEvent.VoiceState("Failed to start Vosk: ${e.message}"))
         }
     }
 
     private fun stopVoskListening() {
-        voskSpeechService?.stop()
-        voskSpeechService?.shutdown()
+        try {
+            voskSpeechService?.stop()
+            voskSpeechService?.shutdown()
+        } catch (_: Exception) {}
         voskSpeechService = null
     }
 
     // --- Vosk Wake-Word Listener ---
     override fun onPartialResult(hypothesis: String?) {
+        if (isCapturingCommand || isProcessingGoal) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastWakeTimestamp < 2500L) return
+
         val partial = JSONObject(hypothesis ?: "{}").optString("partial", "").lowercase()
         if (partial.contains("gemma")) {
+            lastWakeTimestamp = now
+            isCapturingCommand = true
             EventLogger.log(AegisEvent.VoiceState("Wake-word 'Gemma' recognized! Handoff to Android STT."))
             stopVoskListening()
-            Toast.makeText(this, "AEGIS: Listening...", Toast.LENGTH_SHORT).show()
-            startAndroidCommandCapture()
+
+            serviceScope.launch(Dispatchers.Main) {
+                Toast.makeText(this@AegisAccessibilityService, "AEGIS: Listening...", Toast.LENGTH_SHORT).show()
+                // Give AudioRecord hardware line 350ms to cleanly release before SpeechRecognizer locks it
+                kotlinx.coroutines.delay(350)
+                startAndroidCommandCapture()
+            }
         }
     }
 
@@ -141,7 +164,13 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toLanguageTag())
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
-        androidSpeechRecognizer?.startListening(intent)
+        try {
+            androidSpeechRecognizer?.startListening(intent)
+        } catch (e: Exception) {
+            EventLogger.log(AegisEvent.VoiceState("SpeechRecognizer start error: ${e.message}"))
+            isCapturingCommand = false
+            startVoskListening()
+        }
     }
 
     override fun onResults(results: Bundle?) {
@@ -149,21 +178,36 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
         val command = matches?.firstOrNull()?.trim()
 
         if (!command.isNullOrEmpty()) {
+            isProcessingGoal = true
             EventLogger.log(AegisEvent.VoiceState("User intent captured: \"$command\""))
             Toast.makeText(this, "Executing: $command", Toast.LENGTH_SHORT).show()
 
             serviceScope.launch {
-                val summary = agentOrchestrator.executeGoal(command)
-                speakAndReset(summary)
+                try {
+                    val summary = agentOrchestrator.executeGoal(command)
+                    speakAndReset(summary)
+                } catch (e: Exception) {
+                    EventLogger.log(AegisEvent.ErrorEncountered(com.krishna.aegis.telemetry.AegisError.TransientErr("Execution failed: ${e.message}")))
+                    speakAndReset("Action encountered an issue.")
+                } finally {
+                    isProcessingGoal = false
+                }
             }
         } else {
+            isCapturingCommand = false
             startVoskListening()
         }
     }
 
     override fun onError(error: Int) {
         EventLogger.log(AegisEvent.VoiceState("SpeechRecognizer error code: $error"))
-        startVoskListening()
+        serviceScope.launch(Dispatchers.Main) {
+            kotlinx.coroutines.delay(600)
+            isCapturingCommand = false
+            if (!isProcessingGoal) {
+                startVoskListening()
+            }
+        }
     }
 
     override fun onReadyForSpeech(params: Bundle?) {}
@@ -181,13 +225,16 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
             textToSpeech?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {}
                 override fun onDone(utteranceId: String?) {
-                    // Once speaking is completed, restart wake-word listening loop
                     serviceScope.launch(Dispatchers.Main) {
+                        isCapturingCommand = false
+                        isProcessingGoal = false
                         startVoskListening()
                     }
                 }
                 override fun onError(utteranceId: String?) {
                     serviceScope.launch(Dispatchers.Main) {
+                        isCapturingCommand = false
+                        isProcessingGoal = false
                         startVoskListening()
                     }
                 }
@@ -200,6 +247,8 @@ class AegisAccessibilityService : AccessibilityService(), ToolServiceContext, Vo
         if (isTtsReady && textToSpeech != null) {
             textToSpeech?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "UTTERANCE_FINISH")
         } else {
+            isCapturingCommand = false
+            isProcessingGoal = false
             startVoskListening()
         }
     }
