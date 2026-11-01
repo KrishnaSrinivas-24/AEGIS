@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AEGIS</string>
+    <string name="a11y_service_description">Autonomous Edge-Guided Interface Sentinel. Local on-device agent for hands-free OS accessibility and automation powered by Gemma 4.</string>
+</resources>
